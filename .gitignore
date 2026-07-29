@@ -1,0 +1,8 @@
+# 本地私密配置（包含 Bark 设备 Key）
+config.local.json
+
+# 运行时产物
+codex_bark_hook.log
+hooks.generated.json
+__pycache__/
+*.py[cod]

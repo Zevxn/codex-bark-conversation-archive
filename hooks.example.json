@@ -1,0 +1,31 @@
+{
+  "description": "Record Codex prompts and responses, archive them monthly, and optionally send Bark notifications.",
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"D:/Tools/codex-bark-conversation-archive/codex_bark_hook.py\"",
+            "commandWindows": "python \"D:/Tools/codex-bark-conversation-archive/codex_bark_hook.py\"",
+            "timeout": 20,
+            "statusMessage": "正在记录用户问题"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"D:/Tools/codex-bark-conversation-archive/codex_bark_hook.py\"",
+            "commandWindows": "python \"D:/Tools/codex-bark-conversation-archive/codex_bark_hook.py\"",
+            "timeout": 20,
+            "statusMessage": "正在归档对话并发送 Bark 通知"
+          }
+        ]
+      }
+    ]
+  }
+}

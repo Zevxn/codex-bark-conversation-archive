@@ -1,0 +1,17 @@
+{
+  "bark_url": "https://api.day.app/请替换为你的设备Key",
+  "enable_bark_notification": true,
+  "enable_local_history": true,
+  "enable_file_log": true,
+  "history_dir": "~/CodexConversationArchive",
+  "max_body_length": 1500,
+  "max_prompt_in_notification": 500,
+  "conversation_title_max_length": 36,
+  "lock_timeout_seconds": 15.0,
+  "lock_poll_interval_seconds": 0.1,
+  "stale_lock_seconds": 120.0,
+  "ignored_internal_response_keys": [
+    "exclude",
+    "suggestions"
+  ]
+}
