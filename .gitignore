@@ -6,3 +6,4 @@ codex_bark_hook.log
 hooks.generated.json
 __pycache__/
 *.py[cod]
+ref/

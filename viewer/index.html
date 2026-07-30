@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Codex 对话档案</title>
+  <link rel="stylesheet" href="./vendor/katex.min.css">
+  <link rel="stylesheet" href="./vendor/atom-one-light.min.css">
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <div id="appShell" class="app-shell">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">C</div>
+        <div>
+          <h1>Codex 对话档案</h1>
+          <p id="sourceSummary">尚未载入对话记录</p>
+        </div>
+      </div>
+
+      <div class="topbar-actions">
+        <button id="refreshButton" class="button button-quiet" type="button" disabled>
+          <span aria-hidden="true">↻</span> 刷新
+        </button>
+        <button id="openFilesButton" class="button button-quiet" type="button">选择 JSON</button>
+        <button id="openDirectoryButton" class="button button-primary" type="button">选择记录目录</button>
+      </div>
+
+      <input id="fileInput" type="file" accept="application/json,.json" multiple hidden>
+      <input id="directoryInput" type="file" accept="application/json,.json" webkitdirectory multiple hidden>
+    </header>
+
+    <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
+
+    <main class="workspace">
+      <aside class="sidebar" aria-label="项目导航">
+        <button id="sidebarToggle" class="sidebar-toggle" type="button" aria-label="收起项目侧边栏" aria-expanded="true" title="收起侧边栏">
+          <span class="sidebar-toggle-chevron" aria-hidden="true"></span>
+        </button>
+        <div class="source-panel">
+          <span class="source-panel-label">最近的数据源</span>
+          <div class="source-switcher">
+            <div class="custom-select source-custom-select" data-select-id="recentSources">
+              <select id="recentSources" class="select-proxy" tabindex="-1" aria-hidden="true">
+                <option value="">暂无最近数据源</option>
+              </select>
+              <button class="custom-select-trigger" type="button" aria-label="最近的数据源" aria-haspopup="listbox" aria-expanded="false">
+                <span class="custom-select-value">暂无最近数据源</span>
+                <span class="custom-select-chevron" aria-hidden="true"></span>
+              </button>
+              <div class="custom-select-menu" role="listbox" hidden></div>
+            </div>
+            <button id="forgetSourceButton" class="icon-button" type="button" title="从最近列表移除" disabled>×</button>
+          </div>
+        </div>
+
+        <div class="sidebar-heading">
+          <div>
+            <span class="eyebrow">项目</span>
+            <strong id="projectCount">0</strong>
+          </div>
+          <button id="allProjectsButton" class="text-button active" type="button" title="全部项目">全部</button>
+        </div>
+
+        <nav id="projectList" class="project-list" aria-label="项目列表">
+          <div class="sidebar-empty">载入目录后显示项目</div>
+        </nav>
+
+        <div class="privacy-note">
+          <span aria-hidden="true">⌂</span>
+          <p>记录仅在当前浏览器中读取和整理，不会上传到网络。</p>
+        </div>
+      </aside>
+
+      <section class="content">
+        <div id="welcomeView" class="welcome-card">
+          <div class="welcome-icon" aria-hidden="true">▦</div>
+          <span class="eyebrow">本地优先</span>
+          <h2>从你的对话归档开始</h2>
+          <p>选择包含 <code>Codex对话记录_YYYY-MM.json</code> 的目录，或直接选择一个或多个 JSON 文件。</p>
+          <div class="welcome-actions">
+            <button id="welcomeDirectoryButton" class="button button-primary" type="button">选择记录目录</button>
+            <button id="welcomeFilesButton" class="button button-quiet" type="button">选择 JSON 文件</button>
+          </div>
+          <p id="directorySupportHint" class="support-hint"></p>
+        </div>
+
+        <div id="dashboardView" hidden>
+          <section class="dashboard-header">
+            <div>
+              <h2 id="dashboardTitle">全部项目</h2>
+            </div>
+            <div class="header-controls">
+              <label class="search-box">
+                <span aria-hidden="true">⌕</span>
+                <input id="searchInput" type="search" autocomplete="off" placeholder="搜索问题、回答或标题">
+              </label>
+              <div class="year-picker">
+                <span class="year-picker-label">年份</span>
+                <div class="custom-select year-custom-select" data-select-id="yearSelect">
+                  <select id="yearSelect" class="select-proxy" tabindex="-1" aria-hidden="true"></select>
+                  <button class="custom-select-trigger" type="button" aria-label="年份" aria-haspopup="listbox" aria-expanded="false">
+                    <span class="custom-select-value">—</span>
+                    <span class="custom-select-chevron" aria-hidden="true"></span>
+                  </button>
+                  <div class="custom-select-menu custom-select-menu-right" role="listbox" hidden></div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <div class="activity-overview">
+            <section class="stats-grid" aria-label="统计摘要">
+              <article class="stat-card">
+                <span>问答轮数</span>
+                <strong id="turnStat">0</strong>
+                <small id="turnStatHint">当前筛选</small>
+              </article>
+              <article class="stat-card">
+                <span>独立对话</span>
+                <strong id="sessionStat">0</strong>
+                <small>按 session_id 统计</small>
+              </article>
+              <article class="stat-card">
+                <span>活跃天数</span>
+                <strong id="activeDayStat">0</strong>
+                <small id="activeDayHint">当前年份</small>
+              </article>
+              <article class="stat-card accent-card">
+                <span>累计耗时</span>
+                <strong id="durationStat">0 分钟</strong>
+                <small>有耗时记录的问答</small>
+              </article>
+            </section>
+
+            <section class="calendar-card">
+              <div class="section-heading">
+                <div>
+                  <h3 id="calendarHeading">年度活动</h3>
+                  <p>颜色越深，问答越多；再次点击已选日期可查看全部历史</p>
+                </div>
+                <div class="calendar-legend" aria-label="热度图例">
+                  <span>少</span>
+                  <i class="level-0"></i><i class="level-1"></i><i class="level-2"></i><i class="level-3"></i><i class="level-4"></i>
+                  <span>多</span>
+                </div>
+              </div>
+
+              <div class="calendar-scroll">
+                <div class="calendar-layout">
+                  <div class="weekday-labels" aria-hidden="true">
+                    <span></span><span>一</span><span></span><span>三</span><span></span><span>五</span><span></span>
+                  </div>
+                  <div class="calendar-body">
+                    <div id="monthLabels" class="month-labels" aria-hidden="true"></div>
+                    <div id="heatmap" class="heatmap" role="grid" aria-label="年度对话活动日历"></div>
+                  </div>
+                </div>
+              </div>
+            </section>
+          </div>
+
+          <section class="records-section">
+            <div class="section-heading records-heading">
+              <div>
+                <span id="dateScopeLabel" class="eyebrow">所选日期</span>
+                <h3 id="selectedDateHeading">请选择一个日期</h3>
+                <p id="selectedDateSummary">点击日历中的格子查看当天记录</p>
+              </div>
+              <div class="record-actions">
+                <button id="expandAllButton" class="button button-small button-quiet" type="button">全部展开</button>
+                <button id="collapseAllButton" class="button button-small button-quiet" type="button">全部收起</button>
+              </div>
+            </div>
+            <div id="recordGroups" class="record-groups">
+              <div class="records-empty">点击上方日期，按项目查看当天的全部对话。</div>
+            </div>
+          </section>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div id="tooltip" class="tooltip" role="tooltip" hidden></div>
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+  <script src="./vendor/marked.min.js"></script>
+  <script src="./vendor/highlight.min.js"></script>
+  <script src="./vendor/katex.min.js"></script>
+  <script src="./vendor/auto-render.min.js"></script>
+  <script src="./vendor/mermaid.min.js"></script>
+  <script src="./markdown.js"></script>
+  <script src="./app.js"></script>
+</body>
+</html>

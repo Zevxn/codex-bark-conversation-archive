@@ -386,6 +386,7 @@ Codex对话记录_YYYY-MM.json
 
 ## 文档
 
+- [本地对话查看面板](docs/VIEWER.md)
 - [故障排查](docs/TROUBLESHOOTING.md)
 - [JSON 数据格式](docs/JSON_FORMAT.md)
 
