@@ -51,7 +51,7 @@
     bindEvents();
     updateSupportHint();
     await refreshRecentSources();
-    await tryRestoreCurrentSource();
+    await tryLoadConfiguredArchive();
   }
 
   function bindEvents() {
@@ -334,25 +334,33 @@
     refreshCustomSelect("recentSources");
   }
 
-  async function tryRestoreCurrentSource() {
+  async function tryLoadConfiguredArchive() {
     try {
-      const preference = await dbGet(PREF_STORE, "currentSourceId");
-      if (!preference?.value) return;
-      const source = state.recentSources.find((item) => item.id === preference.value);
-      if (!source) return;
+      const payload = await requestConfiguredArchive();
+      if (!payload?.files?.length) return false;
+      const source = {
+        id: "configured-archive",
+        kind: "server-configured",
+        name: payload.source_name || "配置的对话归档",
+        prefetchedFiles: payload.files
+      };
       state.currentSource = source;
-      dom.recentSources.value = source.id;
-      refreshCustomSelect("recentSources");
-      dom.forgetSourceButton.disabled = false;
-      const restored = await loadSource(source, false);
-      if (!restored) {
-        dom.sourceSummary.textContent = `已记住：${source.name} · 点击“刷新”重新授权`;
-        dom.refreshButton.disabled = false;
-        showNotice("已找到上次的数据源。浏览器需要重新授权时，请点击顶部“刷新”。");
-      }
+      return await loadSource(source, false);
     } catch (error) {
-      console.warn("恢复上次数据源失败", error);
+      console.info("未自动加载配置的对话归档", error);
+      return false;
     }
+  }
+
+  async function requestConfiguredArchive() {
+    const response = await fetch("/api/configured-archive", {
+      cache: "no-store",
+      headers: { Accept: "application/json" }
+    });
+    if (response.status === 204 || response.status === 404) return null;
+    if (!response.ok) throw new Error(`自动归档接口返回 ${response.status}`);
+    const payload = await response.json();
+    return payload && Array.isArray(payload.files) ? payload : null;
   }
 
   async function chooseDirectory() {
@@ -493,7 +501,7 @@
   async function loadSource(source, interactive) {
     setBusy(true, `正在读取 ${source.name}…`);
     try {
-      if (!["temporary-files", "temporary-directory"].includes(source.kind)) {
+      if (["directory", "files"].includes(source.kind)) {
         if (!(await ensureSourcePermission(source, interactive))) {
           dom.sourceSummary.textContent = `等待授权：${source.name}`;
           if (interactive) showNotice("未获得数据源读取权限。你可以重试，或选择新的目录。", true);
@@ -518,7 +526,7 @@
       state.selectedYear = latestYear(state.records);
       state.selectedDate = mostRecentActiveDate(state.records, state.selectedYear);
 
-      if (!["temporary-files", "temporary-directory"].includes(source.kind)) {
+      if (["directory", "files"].includes(source.kind)) {
         source.lastUsed = Date.now();
         await dbPut(SOURCE_STORE, source);
         await dbPut(PREF_STORE, { key: "currentSourceId", value: source.id });
@@ -545,6 +553,17 @@
   }
 
   async function readSourceFiles(source) {
+    if (source.kind === "server-configured") {
+      if (Array.isArray(source.prefetchedFiles)) {
+        const files = source.prefetchedFiles;
+        delete source.prefetchedFiles;
+        return files;
+      }
+      const payload = await requestConfiguredArchive();
+      if (!payload?.files?.length) throw new Error("配置的对话归档目录当前不可用，请手动选择记录目录。");
+      source.name = payload.source_name || source.name;
+      return payload.files;
+    }
     if (source.kind === "directory") {
       const entries = [];
       for await (const [name, handle] of source.handle.entries()) {

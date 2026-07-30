@@ -384,6 +384,16 @@ Get-Content codex_bark_hook.log -Tail 40
 Codex对话记录_YYYY-MM.json
 ```
 
+## 本地对话查看面板
+
+Windows 用户可以直接双击：
+
+```text
+启动对话面板.cmd
+```
+
+脚本会启动本地服务并打开浏览器。若 `config.local.json` 中的 `history_dir` 有效且包含月度对话记录，面板会自动加载；否则停留在手动选择界面。完整说明见[本地对话查看面板](docs/VIEWER.md)。
+
 ## 文档
 
 - [本地对话查看面板](docs/VIEWER.md)
