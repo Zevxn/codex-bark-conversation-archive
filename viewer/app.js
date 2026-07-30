@@ -7,6 +7,7 @@
   const DB_VERSION = 1;
   const SOURCE_STORE = "sources";
   const PREF_STORE = "preferences";
+  const REQUIRED_API_VERSION = 3;
   const PROJECT_COLORS = ["#2563eb", "#7c3aed", "#0891b2", "#0f9f6e", "#d97706", "#dc5a5a", "#db2777", "#4f67d8"];
 
   const state = {
@@ -21,7 +22,13 @@
     search: "",
     invalidFiles: [],
     sourceFiles: [],
-    sidebarCollapsed: false
+    sidebarCollapsed: false,
+    pendingDeletion: null,
+    deleteInProgress: false,
+    trashItems: [],
+    restoreInProgress: false,
+    pendingPurge: null,
+    purgeInProgress: false
   };
 
   const dom = {};
@@ -35,13 +42,17 @@
 
   async function initialize() {
     for (const id of [
-      "appShell", "sidebarToggle", "sourceSummary", "refreshButton", "openFilesButton", "openDirectoryButton", "fileInput",
+      "appShell", "sidebarToggle", "sourceSummary", "trashButton", "trashCount", "refreshButton", "openFilesButton", "openDirectoryButton", "fileInput",
       "directoryInput", "notice", "recentSources", "forgetSourceButton", "projectCount",
       "allProjectsButton", "projectList", "welcomeView", "dashboardView", "welcomeDirectoryButton",
       "welcomeFilesButton", "directorySupportHint", "dashboardTitle", "searchInput",
       "yearSelect", "turnStat", "turnStatHint", "sessionStat", "activeDayStat", "activeDayHint",
       "durationStat", "calendarHeading", "monthLabels", "heatmap", "dateScopeLabel", "selectedDateHeading",
-      "selectedDateSummary", "expandAllButton", "collapseAllButton", "recordGroups", "tooltip", "toast"
+      "selectedDateSummary", "expandAllButton", "collapseAllButton", "recordGroups",
+      "deleteDialog", "deleteConversationTitle", "deleteConversationProject", "deleteConversationScope",
+      "cancelDeleteButton", "confirmDeleteButton", "trashDialog", "closeTrashButton", "trashList",
+      "purgeDialog", "purgeConversationTitle", "purgeConversationScope", "cancelPurgeButton", "confirmPurgeButton",
+      "tooltip", "toast"
     ]) {
       dom[id] = document.getElementById(id);
     }
@@ -91,6 +102,32 @@
     });
     dom.collapseAllButton.addEventListener("click", () => {
       for (const details of dom.recordGroups.querySelectorAll("details.conversation-card")) details.open = false;
+    });
+    dom.cancelDeleteButton.addEventListener("click", closeDeleteDialog);
+    dom.confirmDeleteButton.addEventListener("click", confirmConversationDeletion);
+    dom.deleteDialog.addEventListener("click", (event) => {
+      if (event.target === dom.deleteDialog && !state.deleteInProgress) closeDeleteDialog();
+    });
+    dom.deleteDialog.addEventListener("cancel", (event) => {
+      if (state.deleteInProgress) event.preventDefault();
+      else state.pendingDeletion = null;
+    });
+    dom.trashButton.addEventListener("click", openTrashDialog);
+    dom.closeTrashButton.addEventListener("click", closeTrashDialog);
+    dom.trashDialog.addEventListener("click", (event) => {
+      if (event.target === dom.trashDialog && !state.restoreInProgress) closeTrashDialog();
+    });
+    dom.trashDialog.addEventListener("cancel", (event) => {
+      if (state.restoreInProgress) event.preventDefault();
+    });
+    dom.cancelPurgeButton.addEventListener("click", closePurgeDialog);
+    dom.confirmPurgeButton.addEventListener("click", confirmTrashPurge);
+    dom.purgeDialog.addEventListener("click", (event) => {
+      if (event.target === dom.purgeDialog && !state.purgeInProgress) closePurgeDialog();
+    });
+    dom.purgeDialog.addEventListener("cancel", (event) => {
+      if (state.purgeInProgress) event.preventDefault();
+      else state.pendingPurge = null;
     });
     document.addEventListener("keydown", (event) => {
       if (event.key === "/" && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName || "")) {
@@ -342,9 +379,16 @@
         id: "configured-archive",
         kind: "server-configured",
         name: payload.source_name || "配置的对话归档",
-        prefetchedFiles: payload.files
+        prefetchedFiles: payload.files,
+        canDelete: payload.can_delete === true && typeof payload.mutation_token === "string" && Boolean(payload.mutation_token),
+        canRestore: payload.capabilities?.restore === true && Number(payload.api_version) >= REQUIRED_API_VERSION,
+        canPurge: payload.capabilities?.purge === true && Number(payload.api_version) >= REQUIRED_API_VERSION,
+        serviceOutdated: Number(payload.api_version || 0) < REQUIRED_API_VERSION,
+        mutationToken: payload.mutation_token || "",
+        trashCount: Number(payload.trash_count || 0)
       };
       state.currentSource = source;
+      updateTrashButton();
       return await loadSource(source, false);
     } catch (error) {
       console.info("未自动加载配置的对话归档", error);
@@ -499,6 +543,8 @@
   }
 
   async function loadSource(source, interactive) {
+    state.currentSource = source;
+    updateTrashButton();
     setBusy(true, `正在读取 ${source.name}…`);
     try {
       if (["directory", "files"].includes(source.kind)) {
@@ -539,9 +585,13 @@
       renderDashboard();
       dom.refreshButton.disabled = false;
       const warning = parsed.invalidFiles.length ? `；${parsed.invalidFiles.length} 个文件未能读取` : "";
-      dom.sourceSummary.textContent = `${source.name} · ${state.records.length.toLocaleString("zh-CN")} 轮问答${warning}`;
-      showNotice(`已载入 ${state.records.length.toLocaleString("zh-CN")} 轮问答，来自 ${parsed.monthlyFileCount} 个月度文件${warning}`,
-        parsed.invalidFiles.length > 0);
+      const serviceWarning = source.serviceOutdated ? "；本地服务仍是旧版本，请关闭旧启动窗口并重新启动面板" : "";
+      dom.sourceSummary.textContent = `${source.name} · ${state.records.length.toLocaleString("zh-CN")} 轮问答${warning}${serviceWarning}`;
+      showNotice(
+        `已载入 ${state.records.length.toLocaleString("zh-CN")} 轮问答，来自 ${parsed.monthlyFileCount} 个月度文件${warning}${serviceWarning}`,
+        parsed.invalidFiles.length > 0 || source.serviceOutdated,
+        source.serviceOutdated ? 9000 : 4200
+      );
       return true;
     } catch (error) {
       console.error(error);
@@ -562,6 +612,13 @@
       const payload = await requestConfiguredArchive();
       if (!payload?.files?.length) throw new Error("配置的对话归档目录当前不可用，请手动选择记录目录。");
       source.name = payload.source_name || source.name;
+      source.canDelete = payload.can_delete === true && typeof payload.mutation_token === "string" && Boolean(payload.mutation_token);
+      source.canRestore = payload.capabilities?.restore === true && Number(payload.api_version) >= REQUIRED_API_VERSION;
+      source.canPurge = payload.capabilities?.purge === true && Number(payload.api_version) >= REQUIRED_API_VERSION;
+      source.serviceOutdated = Number(payload.api_version || 0) < REQUIRED_API_VERSION;
+      source.mutationToken = payload.mutation_token || "";
+      source.trashCount = Number(payload.trash_count || 0);
+      updateTrashButton();
       return payload.files;
     }
     if (source.kind === "directory") {
@@ -989,7 +1046,25 @@
     metadata.className = "conversation-meta";
     const totalSessionTurns = state.records.filter((record) => record.session_id === latest.session_id).length;
     metadata.textContent = `${ordered.length} 轮（完整对话 ${totalSessionTurns} 轮） · ${formatTime(latest.prompt_time || latest.response_time)}`;
-    summary.append(titleRow, metadata);
+
+    const summaryActions = document.createElement("div");
+    summaryActions.className = "conversation-summary-actions";
+    summaryActions.append(metadata);
+    if (state.currentSource?.kind === "server-configured" && state.currentSource.canDelete) {
+      const deleteButton = document.createElement("button");
+      deleteButton.type = "button";
+      deleteButton.className = "conversation-delete-button";
+      deleteButton.textContent = "删除";
+      deleteButton.title = "将完整对话移入本地回收站";
+      deleteButton.setAttribute("aria-label", `删除完整对话：${title.textContent}`);
+      deleteButton.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        openDeleteDialog(latest.session_id);
+      });
+      summaryActions.append(deleteButton);
+    }
+    summary.append(titleRow, summaryActions);
 
     const list = document.createElement("div");
     list.className = "turn-list";
@@ -998,6 +1073,355 @@
       if (details.open) renderConversationIfNeeded(details);
     });
     return details;
+  }
+
+  function openDeleteDialog(sessionId) {
+    if (!state.currentSource?.canDelete || state.deleteInProgress) return;
+    const records = state.records
+      .filter((record) => record.session_id === sessionId)
+      .sort((a, b) => a._timestamp - b._timestamp);
+    if (!records.length) {
+      showNotice("这条对话已经不在当前归档中，请刷新后重试。", true);
+      return;
+    }
+
+    const title = records.find((record) => record.conversation_title)?.conversation_title || "未命名对话";
+    const projects = Array.from(new Set(records.map((record) => record.project).filter(Boolean)));
+    const dates = Array.from(new Set(records.map((record) => record._dateKey).filter(Boolean))).sort();
+    const dateRange = dates.length <= 1
+      ? (dates[0] ? formatDateLong(dates[0]) : "日期未知")
+      : `${formatDateLong(dates[0])} 至 ${formatDateLong(dates[dates.length - 1])}`;
+
+    state.pendingDeletion = { sessionId, title };
+    dom.deleteConversationTitle.textContent = title;
+    dom.deleteConversationProject.textContent = projects.join("、") || "未分类项目";
+    dom.deleteConversationScope.textContent = `${records.length} 轮问答 · ${dates.length || 0} 个日期 · ${dateRange}`;
+    dom.confirmDeleteButton.disabled = false;
+    dom.confirmDeleteButton.textContent = "移入回收站";
+    if (typeof dom.deleteDialog.showModal === "function") dom.deleteDialog.showModal();
+    else dom.deleteDialog.setAttribute("open", "");
+  }
+
+  function closeDeleteDialog() {
+    if (state.deleteInProgress) return;
+    state.pendingDeletion = null;
+    if (typeof dom.deleteDialog.close === "function" && dom.deleteDialog.open) dom.deleteDialog.close();
+    else dom.deleteDialog.removeAttribute("open");
+  }
+
+  async function confirmConversationDeletion() {
+    const pending = state.pendingDeletion;
+    const source = state.currentSource;
+    if (!pending || source?.kind !== "server-configured" || !source.canDelete || !source.mutationToken) return;
+
+    state.deleteInProgress = true;
+    dom.cancelDeleteButton.disabled = true;
+    dom.confirmDeleteButton.disabled = true;
+    dom.confirmDeleteButton.textContent = "正在移入…";
+    setBusy(true, `正在删除完整对话：${pending.title}…`);
+    try {
+      const viewState = {
+        selectedProject: state.selectedProject,
+        selectedYear: state.selectedYear,
+        selectedDate: state.selectedDate,
+        search: state.search,
+        searchInput: dom.searchInput.value
+      };
+      const result = await requestConversationDeletion(pending.sessionId, source.mutationToken);
+      state.deleteInProgress = false;
+      closeDeleteDialog();
+      source.trashCount = Number(source.trashCount || 0) + 1;
+      updateTrashButton();
+      await refreshConfiguredSource(source, Number(result.remaining_record_count), viewState);
+      if (result.warning) showNotice(result.warning, true, 7000);
+      showToast(`已将 ${Number(result.deleted_record_count || 0).toLocaleString("zh-CN")} 轮问答移入回收站`);
+    } catch (error) {
+      console.error(error);
+      showNotice(error.message || String(error), true, 7000);
+    } finally {
+      state.deleteInProgress = false;
+      dom.cancelDeleteButton.disabled = false;
+      dom.confirmDeleteButton.disabled = false;
+      dom.confirmDeleteButton.textContent = "移入回收站";
+      setBusy(false);
+    }
+  }
+
+  async function requestConversationDeletion(sessionId, mutationToken) {
+    const response = await fetch("/api/delete-conversation", {
+      method: "POST",
+      cache: "no-store",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        "X-Viewer-Token": mutationToken
+      },
+      body: JSON.stringify({ session_id: sessionId })
+    });
+    let payload = null;
+    try {
+      payload = await response.json();
+    } catch {
+      // The generic status message below remains useful if the local service ended unexpectedly.
+    }
+    if (!response.ok) throw new Error(payload?.error || `删除接口返回 ${response.status}`);
+    return payload || {};
+  }
+
+  async function refreshConfiguredSource(source, remainingRecordCount, viewState) {
+    if (Number(remainingRecordCount) <= 0) {
+      state.records = [];
+      state.projects = new Map();
+      state.sessionIndex = new Map();
+      state.sourceFiles = [];
+      state.invalidFiles = [];
+      state.selectedProject = "all";
+      state.selectedDate = null;
+      state.search = "";
+      dom.searchInput.value = "";
+      renderProjectList();
+      dom.dashboardView.hidden = true;
+      dom.welcomeView.hidden = false;
+      dom.sourceSummary.textContent = `${source.name} · 0 轮问答`;
+      return;
+    }
+
+    const loaded = await loadSource(source, false);
+    if (!loaded) return;
+    state.search = viewState.search;
+    dom.searchInput.value = viewState.searchInput;
+    state.selectedProject = viewState.selectedProject === "all" || state.projects.has(viewState.selectedProject)
+      ? viewState.selectedProject
+      : "all";
+    const availableYears = new Set(state.records.map((record) => Number(record._dateKey.slice(0, 4))).filter(Number.isFinite));
+    state.selectedYear = availableYears.has(viewState.selectedYear) ? viewState.selectedYear : latestYear(state.records);
+    const filtered = getFilteredRecords();
+    if (viewState.selectedDate === "all") state.selectedDate = "all";
+    else if (filtered.some((record) => record._dateKey === viewState.selectedDate)) state.selectedDate = viewState.selectedDate;
+    else state.selectedDate = mostRecentActiveDate(filtered, state.selectedYear);
+    renderProjectList();
+    renderYearOptions();
+    renderDashboard();
+  }
+
+  function updateTrashButton() {
+    const source = state.currentSource;
+    const enabled = source?.kind === "server-configured" && source.canRestore && source.mutationToken;
+    const count = enabled ? Math.max(0, Number(source.trashCount || 0)) : 0;
+    dom.trashButton.disabled = !enabled;
+    dom.trashCount.textContent = count.toLocaleString("zh-CN");
+    dom.trashCount.hidden = count <= 0;
+  }
+
+  async function openTrashDialog() {
+    const source = state.currentSource;
+    if (source?.kind !== "server-configured" || !source.canRestore || !source.mutationToken) return;
+    dom.trashList.innerHTML = '<div class="trash-empty">正在读取回收站…</div>';
+    if (typeof dom.trashDialog.showModal === "function") dom.trashDialog.showModal();
+    else dom.trashDialog.setAttribute("open", "");
+    await loadTrashItems();
+  }
+
+  function closeTrashDialog() {
+    if (state.restoreInProgress) return;
+    if (typeof dom.trashDialog.close === "function" && dom.trashDialog.open) dom.trashDialog.close();
+    else dom.trashDialog.removeAttribute("open");
+  }
+
+  async function loadTrashItems(showErrors = true) {
+    const source = state.currentSource;
+    if (source?.kind !== "server-configured" || !source.canRestore || !source.mutationToken) return false;
+    try {
+      const payload = await requestTrashItems(source.mutationToken);
+      state.trashItems = payload.items || [];
+      source.trashCount = Number(payload.count || state.trashItems.length);
+      updateTrashButton();
+      renderTrashItems(payload.invalid_count || 0);
+      return true;
+    } catch (error) {
+      console.error(error);
+      dom.trashList.innerHTML = '<div class="trash-empty error">回收站读取失败，请刷新页面后重试。</div>';
+      if (showErrors) showNotice(error.message || String(error), true, 7000);
+      return false;
+    }
+  }
+
+  async function requestTrashItems(mutationToken) {
+    const response = await fetch("/api/trash", {
+      cache: "no-store",
+      headers: { Accept: "application/json", "X-Viewer-Token": mutationToken }
+    });
+    const payload = await response.json().catch(() => null);
+    if (response.status === 404) throw new Error("本地服务仍是旧版本，请关闭旧启动窗口并重新启动对话面板。");
+    if (response.status === 403) throw new Error("检测到本地服务实例不一致，请关闭所有旧启动窗口后重新启动。");
+    if (!response.ok) throw new Error(payload?.error || `回收站接口返回 ${response.status}`);
+    return payload || { items: [], count: 0 };
+  }
+
+  function renderTrashItems(invalidCount = 0) {
+    dom.trashList.replaceChildren();
+    if (!state.trashItems.length) {
+      const empty = document.createElement("div");
+      empty.className = "trash-empty";
+      empty.textContent = invalidCount ? `没有可恢复的对话；另有 ${invalidCount} 个回收站文件无法读取。` : "回收站是空的。";
+      dom.trashList.append(empty);
+      return;
+    }
+
+    for (const item of state.trashItems) {
+      const card = document.createElement("article");
+      card.className = "trash-item";
+      const content = document.createElement("div");
+      content.className = "trash-item-content";
+      const title = document.createElement("strong");
+      title.textContent = item.conversation_title || "未命名对话";
+      const metadata = document.createElement("span");
+      const statusText = item.status === "completed" ? "" : " · 待安全补回";
+      metadata.textContent = `${Number(item.deleted_record_count || 0).toLocaleString("zh-CN")} 轮问答 · ${formatDateTime(item.deleted_at)}${statusText}`;
+      content.append(title, metadata);
+      const restoreButton = document.createElement("button");
+      restoreButton.type = "button";
+      restoreButton.className = "button button-small button-quiet trash-restore-button";
+      restoreButton.textContent = "恢复";
+      restoreButton.disabled = state.restoreInProgress;
+      restoreButton.addEventListener("click", () => restoreTrashItem(item, restoreButton));
+      const actions = document.createElement("div");
+      actions.className = "trash-item-actions";
+      actions.append(restoreButton);
+      if (state.currentSource?.canPurge) {
+        const purgeButton = document.createElement("button");
+        purgeButton.type = "button";
+        purgeButton.className = "button button-small trash-purge-button";
+        purgeButton.textContent = "彻底删除";
+        purgeButton.disabled = state.restoreInProgress || state.purgeInProgress;
+        purgeButton.addEventListener("click", () => openPurgeDialog(item));
+        actions.append(purgeButton);
+      }
+      card.append(content, actions);
+      dom.trashList.append(card);
+    }
+    if (invalidCount) {
+      const warning = document.createElement("p");
+      warning.className = "trash-list-warning";
+      warning.textContent = `${invalidCount} 个回收站文件无法读取，已从列表中忽略。`;
+      dom.trashList.append(warning);
+    }
+  }
+
+  async function restoreTrashItem(item, restoreButton) {
+    const source = state.currentSource;
+    if (state.restoreInProgress || source?.kind !== "server-configured" || !source.canRestore || !source.mutationToken) return;
+    state.restoreInProgress = true;
+    restoreButton.disabled = true;
+    restoreButton.textContent = "正在恢复…";
+    for (const button of dom.trashList.querySelectorAll(".trash-restore-button")) button.disabled = true;
+    const viewState = {
+      selectedProject: state.selectedProject,
+      selectedYear: state.selectedYear,
+      selectedDate: state.selectedDate,
+      search: state.search,
+      searchInput: dom.searchInput.value
+    };
+    try {
+      const result = await requestTrashRestore(item.deletion_id, source.mutationToken);
+      source.trashCount = Number(result.remaining_trash_count || 0);
+      updateTrashButton();
+      await refreshConfiguredSource(source, Math.max(1, state.records.length + Number(result.restored_record_count || 0)), viewState);
+      await loadTrashItems(false);
+      if (result.warning) showNotice(result.warning, true, 7000);
+      const skipped = Number(result.skipped_existing_count || 0);
+      showToast(skipped
+        ? `已恢复 ${Number(result.restored_record_count || 0)} 轮，跳过 ${skipped} 轮现有记录`
+        : `已恢复 ${Number(result.restored_record_count || 0)} 轮问答`);
+    } catch (error) {
+      console.error(error);
+      showNotice(error.message || String(error), true, 7000);
+    } finally {
+      state.restoreInProgress = false;
+      renderTrashItems();
+    }
+  }
+
+  async function requestTrashRestore(deletionId, mutationToken) {
+    const response = await fetch("/api/restore-conversation", {
+      method: "POST",
+      cache: "no-store",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        "X-Viewer-Token": mutationToken
+      },
+      body: JSON.stringify({ deletion_id: deletionId })
+    });
+    const payload = await response.json().catch(() => null);
+    if (response.status === 404) throw new Error("本地服务仍是旧版本，请关闭旧启动窗口并重新启动对话面板。");
+    if (response.status === 403) throw new Error("检测到本地服务实例不一致，请关闭所有旧启动窗口后重新启动。");
+    if (!response.ok) throw new Error(payload?.error || `恢复接口返回 ${response.status}`);
+    return payload || {};
+  }
+
+  function openPurgeDialog(item) {
+    const source = state.currentSource;
+    if (!source?.canPurge || state.purgeInProgress || state.restoreInProgress) return;
+    state.pendingPurge = item;
+    dom.purgeConversationTitle.textContent = item.conversation_title || "未命名对话";
+    dom.purgeConversationScope.textContent = `${Number(item.deleted_record_count || 0).toLocaleString("zh-CN")} 轮问答 · 删除于 ${formatDateTime(item.deleted_at)}`;
+    dom.confirmPurgeButton.disabled = false;
+    dom.confirmPurgeButton.textContent = "彻底删除";
+    if (typeof dom.purgeDialog.showModal === "function") dom.purgeDialog.showModal();
+    else dom.purgeDialog.setAttribute("open", "");
+  }
+
+  function closePurgeDialog() {
+    if (state.purgeInProgress) return;
+    state.pendingPurge = null;
+    if (typeof dom.purgeDialog.close === "function" && dom.purgeDialog.open) dom.purgeDialog.close();
+    else dom.purgeDialog.removeAttribute("open");
+  }
+
+  async function confirmTrashPurge() {
+    const item = state.pendingPurge;
+    const source = state.currentSource;
+    if (!item || !source?.canPurge || !source.mutationToken || state.purgeInProgress) return;
+    state.purgeInProgress = true;
+    dom.cancelPurgeButton.disabled = true;
+    dom.confirmPurgeButton.disabled = true;
+    dom.confirmPurgeButton.textContent = "正在删除…";
+    try {
+      const result = await requestTrashPurge(item.deletion_id, source.mutationToken);
+      source.trashCount = Number(result.remaining_trash_count || 0);
+      updateTrashButton();
+      state.purgeInProgress = false;
+      closePurgeDialog();
+      await loadTrashItems(false);
+      showToast("回收站记录已彻底删除");
+    } catch (error) {
+      console.error(error);
+      showNotice(error.message || String(error), true, 7000);
+    } finally {
+      state.purgeInProgress = false;
+      dom.cancelPurgeButton.disabled = false;
+      dom.confirmPurgeButton.disabled = false;
+      dom.confirmPurgeButton.textContent = "彻底删除";
+    }
+  }
+
+  async function requestTrashPurge(deletionId, mutationToken) {
+    const response = await fetch("/api/purge-trash", {
+      method: "POST",
+      cache: "no-store",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        "X-Viewer-Token": mutationToken
+      },
+      body: JSON.stringify({ deletion_id: deletionId })
+    });
+    const payload = await response.json().catch(() => null);
+    if (response.status === 404) throw new Error(payload?.error || "本地服务仍是旧版本，请关闭旧启动窗口并重新启动对话面板。");
+    if (response.status === 403) throw new Error("检测到本地服务实例不一致，请关闭所有旧启动窗口后重新启动。");
+    if (!response.ok) throw new Error(payload?.error || `彻底删除接口返回 ${response.status}`);
+    return payload || {};
   }
 
   function renderConversationIfNeeded(details) {
@@ -1188,6 +1612,8 @@
     dom.welcomeDirectoryButton.disabled = busy;
     dom.welcomeFilesButton.disabled = busy;
     dom.refreshButton.disabled = busy || !state.currentSource;
+    if (busy) dom.trashButton.disabled = true;
+    else updateTrashButton();
     if (busy && message) dom.sourceSummary.textContent = message;
   }
 })();

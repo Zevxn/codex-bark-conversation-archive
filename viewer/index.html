@@ -21,6 +21,9 @@
       </div>
 
       <div class="topbar-actions">
+        <button id="trashButton" class="button button-quiet trash-button" type="button" disabled>
+          回收站 <span id="trashCount" class="trash-count" hidden>0</span>
+        </button>
         <button id="refreshButton" class="button button-quiet" type="button" disabled>
           <span aria-hidden="true">↻</span> 刷新
         </button>
@@ -70,7 +73,7 @@
 
         <div class="privacy-note">
           <span aria-hidden="true">⌂</span>
-          <p>记录仅在当前浏览器中读取和整理，不会上传到网络。</p>
+          <p>记录不会上传到网络；配置目录中的对话可移入本地回收站。</p>
         </div>
       </aside>
 
@@ -182,6 +185,75 @@
       </section>
     </main>
   </div>
+
+  <dialog id="deleteDialog" class="delete-dialog" aria-labelledby="deleteDialogTitle" aria-describedby="deleteDialogDescription">
+    <div class="delete-dialog-panel">
+      <div class="delete-dialog-heading">
+        <span class="delete-dialog-icon" aria-hidden="true">!</span>
+        <div>
+          <span class="eyebrow">移入本地回收站</span>
+          <h2 id="deleteDialogTitle">删除完整对话？</h2>
+        </div>
+      </div>
+      <p id="deleteDialogDescription" class="delete-dialog-description">
+        这会从月度归档中移除完整对话，而不只是当前日期显示的部分。
+      </p>
+      <dl class="delete-dialog-details">
+        <div><dt>对话</dt><dd id="deleteConversationTitle">—</dd></div>
+        <div><dt>项目</dt><dd id="deleteConversationProject">—</dd></div>
+        <div><dt>范围</dt><dd id="deleteConversationScope">—</dd></div>
+      </dl>
+      <p class="delete-dialog-warning">
+        删除记录会保存到归档目录的 <code>.trash</code> 中，不会删除 Codex 原始任务或 transcript。
+      </p>
+      <div class="delete-dialog-actions">
+        <button id="cancelDeleteButton" class="button button-quiet" type="button">取消</button>
+        <button id="confirmDeleteButton" class="button button-danger" type="button">移入回收站</button>
+      </div>
+    </div>
+  </dialog>
+
+  <dialog id="trashDialog" class="trash-dialog" aria-labelledby="trashDialogTitle">
+    <div class="trash-dialog-panel">
+      <div class="trash-dialog-heading">
+        <div>
+          <span class="eyebrow">本地归档</span>
+          <h2 id="trashDialogTitle">回收站</h2>
+          <p>恢复后，对话会按原月份放回月度记录并重新补入索引。</p>
+        </div>
+        <button id="closeTrashButton" class="trash-dialog-close" type="button" aria-label="关闭回收站">×</button>
+      </div>
+      <div id="trashList" class="trash-list">
+        <div class="trash-empty">正在读取回收站…</div>
+      </div>
+    </div>
+  </dialog>
+
+  <dialog id="purgeDialog" class="delete-dialog" aria-labelledby="purgeDialogTitle" aria-describedby="purgeDialogDescription">
+    <div class="delete-dialog-panel">
+      <div class="delete-dialog-heading">
+        <span class="delete-dialog-icon" aria-hidden="true">!</span>
+        <div>
+          <span class="eyebrow">不可撤销操作</span>
+          <h2 id="purgeDialogTitle">彻底删除回收站记录？</h2>
+        </div>
+      </div>
+      <p id="purgeDialogDescription" class="delete-dialog-description">
+        对应的回收站 JSON 将被永久删除，此后无法通过看板恢复。
+      </p>
+      <dl class="delete-dialog-details">
+        <div><dt>对话</dt><dd id="purgeConversationTitle">—</dd></div>
+        <div><dt>范围</dt><dd id="purgeConversationScope">—</dd></div>
+      </dl>
+      <p class="delete-dialog-warning">
+        此操作只删除回收站中的备份文件，不会再次修改当前月度归档。
+      </p>
+      <div class="delete-dialog-actions">
+        <button id="cancelPurgeButton" class="button button-quiet" type="button">取消</button>
+        <button id="confirmPurgeButton" class="button button-danger" type="button">彻底删除</button>
+      </div>
+    </div>
+  </dialog>
 
   <div id="tooltip" class="tooltip" role="tooltip" hidden></div>
   <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
