@@ -7,3 +7,4 @@ hooks.generated.json
 __pycache__/
 *.py[cod]
 ref/
+*min.js
